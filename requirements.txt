@@ -1,0 +1,9 @@
+# For ASCII figlet headings
+pyfiglet>=0.8
+
+# For image slides (optional)
+Pillow>=10.0.0
+
+# On Windows, users need curses support
+# pip install windows-curses
+
