@@ -29,6 +29,17 @@ def greet(name):
 
 greet("World")
 ```
+---
+# Tables
+
+This should render as a table.
+
+| Header1 | *Header2* |
+|---------|---------|
+| Cell1   | **Cell2**   |
+| Cell3   | Cell4   |
+
+Oh yeah!
 
 ---
 

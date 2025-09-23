@@ -13,7 +13,8 @@ except ImportError:
 
 def parse_markdown(md_text):
     slides = []
-    raw_slides = md_text.split("---")
+    # Split on lines starting with three or more dashes
+    raw_slides = re.split(r'^\-{3,}\s*$', md_text, flags=re.MULTILINE)
     for raw in raw_slides:
         lines = [line.rstrip() for line in raw.strip().splitlines()]
         if not any(l.strip() for l in lines):
@@ -134,6 +135,27 @@ def render_links(line, stdscr, y, x, maxw):
         stdscr.addstr(y, x + pos, line[pos:])
 
 
+def rendered_length(text):
+    """Calculate the rendered length of text after removing markdown inline formatting delimiters."""
+    cursor = 0
+    pattern = re.compile(r"(\*\*([^\*]+)\*\*|\*([^\*]+)\*|`([^`]+)`)")
+    last_end = 0
+    for match in pattern.finditer(text):
+        start, end = match.span()
+        if start > last_end:
+            cursor += (start - last_end)
+        if match.group(2):  # bold
+            cursor += len(match.group(2))
+        elif match.group(3):  # italic
+            cursor += len(match.group(3))
+        elif match.group(4):  # inline code
+            cursor += len(match.group(4))
+        last_end = end
+    if last_end < len(text):
+        cursor += (len(text) - last_end)
+    return cursor
+
+
 def format_inline(line, stdscr, y, x, maxw):
     cursor = 0
     pattern = re.compile(r"(\*\*([^\*]+)\*\*|\*([^\*]+)\*|`([^`]+)`)")
@@ -168,17 +190,119 @@ def format_inline(line, stdscr, y, x, maxw):
         stdscr.addstr(y, x + cursor, text)
 
 
-def format_text(line, stdscr, y, x, maxw, fig_slide):
+def parse_table(lines, start_idx):
+    """Parse a markdown table starting from start_idx, return table data and number of lines consumed."""
+    if start_idx >= len(lines) or not lines[start_idx].strip().startswith("|"):
+        return None, 0
+    
+    table_data = []
+    col_widths = []
+    current_line = start_idx
+    
+    # Parse header
+    header = [cell.strip() for cell in lines[current_line].strip("| \t").split("|")]
+    if not header:
+        return None, 0
+    table_data.append(header)
+    col_widths = [rendered_length(cell) for cell in header]
+    current_line += 1
+    
+    # Parse separator line
+    if current_line >= len(lines) or not lines[current_line].strip().startswith("|"):
+        return None, 0
+    separator = lines[current_line].strip("| \t").split("|")
+    if len(separator) != len(header) or not all(re.match(r"^-+:?-*$", cell.strip()) for cell in separator):
+        return None, 0
+    current_line += 1
+    
+    # Parse rows
+    while current_line < len(lines) and lines[current_line].strip().startswith("|"):
+        row = [cell.strip() for cell in lines[current_line].strip("| \t").split("|")]
+        if len(row) != len(header):
+            break
+        table_data.append(row)
+        for i, cell in enumerate(row):
+            col_widths[i] = max(col_widths[i], rendered_length(cell))
+        current_line += 1
+    
+    return table_data, col_widths, current_line - start_idx
+
+
+def render_row(stdscr, y, row, col_widths, x, maxw):
+    """Render a single table row with breathing room (space on both sides of content)."""
+    stdscr.addstr(y, x, "│")
+    current_x = x + 1
+    for i, cell in enumerate(row):
+        # Left padding space
+        stdscr.addstr(y, current_x, " ")
+        content_x = current_x + 1
+        # Render cell content with inline formatting
+        format_inline(cell, stdscr, y, content_x, maxw)
+        rl = rendered_length(cell)
+        # Right padding: fill up to col_widths[i] (content width) + 1 extra space
+        pad_x = content_x + rl
+        pad_len = col_widths[i] - rl + 1  # +1 for right padding space
+        if pad_len > 0:
+            stdscr.addstr(y, pad_x, " " * pad_len)
+        border_x = content_x + col_widths[i] + 1
+        stdscr.addstr(y, border_x, "│")
+        current_x = border_x + 1
+    return 1
+
+
+def render_table(table_data, col_widths, stdscr, y, x, maxw):
+    """Render a table using ASCII box-drawing characters with inline formatting and breathing room."""
+    if not table_data:
+        return 0
+        
+    stdscr.attron(curses.color_pair(8))  # Table color
+    lines_used = 0
+    
+    # Draw top border: +2 for spaces on both sides of content
+    top_border = "┌" + "┬".join("─" * (w + 2) for w in col_widths) + "┐"
+    stdscr.addstr(y, x, top_border[:maxw - x])
+    lines_used += 1
+    
+    # Draw header row
+    header = table_data[0]
+    lines_used += render_row(stdscr, y + lines_used, header, col_widths, x, maxw)
+    
+    # Draw separator
+    sep_border = "├" + "┼".join("─" * (w + 2) for w in col_widths) + "┤"
+    stdscr.addstr(y + lines_used, x, sep_border[:maxw - x])
+    lines_used += 1
+    
+    # Draw data rows
+    for row in table_data[1:]:
+        lines_used += render_row(stdscr, y + lines_used, row, col_widths, x, maxw)
+    
+    # Draw bottom border
+    bot_border = "└" + "┴".join("─" * (w + 2) for w in col_widths) + "┘"
+    stdscr.addstr(y + lines_used, x, bot_border[:maxw - x])
+    lines_used += 1
+    
+    stdscr.attroff(curses.color_pair(8))
+    return lines_used
+
+
+def format_text(line, stdscr, y, x, maxw, fig_slide, lines=None, line_idx=0):
+    if lines and line.strip().startswith("|"):
+        table_info = parse_table(lines, line_idx)
+        if table_info[0] is not None:  # Check if table parsing succeeded
+            table_data, col_widths, lines_consumed = table_info
+            rendered = render_table(table_data, col_widths, stdscr, y, x, maxw)
+            return rendered, lines_consumed
+    
     if re.search(r"!\[[^\]]*\]\([^)]*\)|\[[^\]]*\]\([^)]*\)", line):
         render_links(line, stdscr, y, x, maxw)
-        return 1
+        return 1, 1
     if line.strip().startswith(">"):
         text = line.lstrip("> ").strip()
         stdscr.attron(curses.color_pair(9))
         stdscr.addstr(y, x, "│ ")
         format_inline(text, stdscr, y, x + 2, maxw)
         stdscr.attroff(curses.color_pair(9))
-        return 1
+        return 1, 1
     m = re.match(r"^(#+) (.*)$", line)
     if m:
         level = len(m.group(1))
@@ -186,28 +310,29 @@ def format_text(line, stdscr, y, x, maxw, fig_slide):
         if level == 1:
             ascii_title = fig_slide.renderText(text)
             stdscr.attron(curses.color_pair(2))
-            for i, l in enumerate(ascii_title.splitlines()):
+            title_lines = ascii_title.splitlines()
+            for i, l in enumerate(title_lines):
                 stdscr.addstr(y + i, x, l[: maxw - x])
             stdscr.attroff(curses.color_pair(2))
-            return len(ascii_title.splitlines())
+            return len(title_lines), 1
         elif level == 2:
             stdscr.attron(curses.color_pair(3))
             format_inline(text, stdscr, y, x, maxw)
             stdscr.attroff(curses.color_pair(3))
-            return 1
+            return 1, 1
         else:
             stdscr.attron(curses.color_pair(4))
             format_inline(text, stdscr, y, x, maxw)
             stdscr.attroff(curses.color_pair(4))
-            return 1
+            return 1, 1
     if line.strip().startswith("- "):
         line = "• " + line.strip()[2:]
         stdscr.attron(curses.color_pair(10))
         format_inline(line, stdscr, y, x, maxw)
         stdscr.attroff(curses.color_pair(10))
-        return 1
+        return 1, 1
     format_inline(line, stdscr, y, x, maxw)
-    return 1
+    return 1, 1
 
 
 def render_content(stdscr, content, start_y, start_x, maxw, fig_slide):
@@ -219,18 +344,23 @@ def render_content(stdscr, content, start_y, start_x, maxw, fig_slide):
     lines = content.split("\n")
     in_code = False
     y = start_y
-    for line in lines:
+    i = 0
+    while i < len(lines):
+        line = lines[i]
         if line.strip().startswith("```"):
             in_code = not in_code
+            i += 1
             continue
         if in_code:
             stdscr.attron(curses.color_pair(7))
             stdscr.addstr(y, start_x, "│ " + line[: maxw - (start_x + 2)])
             stdscr.attroff(curses.color_pair(7))
             y += 1
+            i += 1
             continue
-        consumed = format_text(line, stdscr, y, start_x, maxw, fig_slide)
-        y += consumed
+        rendered_consumed, source_consumed = format_text(line, stdscr, y, start_x, maxw, fig_slide, lines, i)
+        y += rendered_consumed
+        i += source_consumed
 
 
 def run_slideshow(stdscr, slides):
@@ -243,10 +373,11 @@ def run_slideshow(stdscr, slides):
     curses.init_pair(3, curses.COLOR_CYAN, -1)     # Heading 2
     curses.init_pair(4, curses.COLOR_MAGENTA, -1)  # Heading 3+
     curses.init_pair(5, curses.COLOR_RED, -1)      # Bold
-    curses.init_pair(6, curses.COLOR_YELLOW, -1)      # Italic
+    curses.init_pair(6, curses.COLOR_YELLOW, -1)   # Italic
     curses.init_pair(7, curses.COLOR_GREEN, -1)    # Code
+    curses.init_pair(8, curses.COLOR_WHITE, -1)    # Table
     curses.init_pair(9, curses.COLOR_WHITE, -1)    # Blockquote
-    curses.init_pair(10, curses.COLOR_CYAN, -1)    # Bullets
+    curses.init_pair(10, curses.COLOR_CYAN, -1)   # Bullets
     curses.init_pair(12, curses.COLOR_BLUE, -1)    # Links & image paths
 
     fig_title = Figlet(font="standard")
