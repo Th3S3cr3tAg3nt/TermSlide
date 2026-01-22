@@ -1,15 +1,15 @@
-# TermSlide theme reference: nord
+# TermSlide theme reference: nord-aurora
 # Nord palette docs: https://www.nordtheme.com/docs/colors-and-palettes
-name: nord
+name: nord-aurora
 figlet:
-  title: smslant
+  title: univers
   slide: small
 colors:
   heading1:
-    fg: [136, 192, 208]   # nord8
+    fg: [191, 97, 106]    # nord11
     bg: default
   heading2:
-    fg: [129, 161, 193]   # nord9
+    fg: [208, 135, 112]   # nord12
     bg: default
   heading3:
     fg: [180, 142, 173]   # nord15
@@ -24,17 +24,17 @@ colors:
     fg: [163, 190, 140]   # nord14
     bg: default
   table:
-    fg: [216, 222, 233]   # nord4
-    bg: default
-  blockquote:
     fg: [229, 233, 240]   # nord5
     bg: default
+  blockquote:
+    fg: [236, 239, 244]   # nord6
+    bg: default
   bullet:
-    fg: [143, 188, 187]   # nord7
+    fg: [208, 135, 112]   # nord12
     bg: default
   checkbox_checked:
     fg: [163, 190, 140]   # nord14
     bg: default
   link:
-    fg: [94, 129, 172]    # nord10
+    fg: [191, 97, 106]    # nord11
     bg: default

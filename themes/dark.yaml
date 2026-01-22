@@ -1,0 +1,39 @@
+# TermSlide theme reference: dark
+name: dark
+figlet:
+  title: slant
+  slide: small
+colors:
+  heading1:
+    fg: 11
+    bg: default
+  heading2:
+    fg: 14
+    bg: default
+  heading3:
+    fg: 13
+    bg: default
+  bold:
+    fg: default
+    bg: default
+  italic:
+    fg: default
+    bg: default
+  code:
+    fg: default
+    bg: default
+  table:
+    fg: default
+    bg: default
+  blockquote:
+    fg: default
+    bg: default
+  bullet:
+    fg: default
+    bg: default
+  checkbox_checked:
+    fg: default
+    bg: default
+  link:
+    fg: default
+    bg: default

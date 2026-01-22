@@ -1,0 +1,39 @@
+# TermSlide theme reference: light
+name: light
+figlet:
+  title: lean
+  slide: mini
+colors:
+  heading1:
+    fg: 4      # curses.COLOR_BLUE
+    bg: default
+  heading2:
+    fg: 5      # curses.COLOR_MAGENTA
+    bg: default
+  heading3:
+    fg: 6      # curses.COLOR_CYAN
+    bg: default
+  bold:
+    fg: 1      # curses.COLOR_RED
+    bg: default
+  italic:
+    fg: 3      # curses.COLOR_YELLOW
+    bg: default
+  code:
+    fg: 2      # curses.COLOR_GREEN
+    bg: default
+  table:
+    fg: 0      # curses.COLOR_BLACK
+    bg: default
+  blockquote:
+    fg: 0      # curses.COLOR_BLACK
+    bg: default
+  bullet:
+    fg: 4      # curses.COLOR_BLUE
+    bg: default
+  checkbox_checked:
+    fg: 2      # curses.COLOR_GREEN
+    bg: default
+  link:
+    fg: 4      # curses.COLOR_BLUE
+    bg: default

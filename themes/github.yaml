@@ -1,0 +1,39 @@
+# TermSlide theme reference: github
+name: github
+figlet:
+  title: standard
+  slide: small
+colors:
+  heading1:
+    fg: [9, 105, 218]
+    bg: default
+  heading2:
+    fg: [130, 80, 223]
+    bg: default
+  heading3:
+    fg: [31, 136, 61]
+    bg: default
+  bold:
+    fg: [209, 36, 47]
+    bg: default
+  italic:
+    fg: [191, 135, 0]
+    bg: default
+  code:
+    fg: [31, 136, 61]
+    bg: default
+  table:
+    fg: [87, 96, 106]
+    bg: default
+  blockquote:
+    fg: [87, 96, 106]
+    bg: default
+  bullet:
+    fg: [9, 105, 218]
+    bg: default
+  checkbox_checked:
+    fg: [31, 136, 61]
+    bg: default
+  link:
+    fg: [9, 105, 218]
+    bg: default

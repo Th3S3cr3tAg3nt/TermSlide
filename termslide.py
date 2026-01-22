@@ -33,6 +33,7 @@ import hashlib
 from typing import Optional, Tuple, List, Dict, Any
 
 from pyfiglet import Figlet
+from pyfiglet import FigletFont
 
 # Optional Mermaid support (pip install mermaid-ascii-diagrams).
 # The `mermaid-ascii-diagrams` project installs the `mermaid_ascii` module.
@@ -66,6 +67,29 @@ PAIR_BLOCKQUOTE = 9
 PAIR_BULLET = 10
 PAIR_CHECKBOX_CHECKED = 11
 PAIR_LINK = 12
+
+# Default fonts if requested ones are missing.
+_DEFAULT_FIGLET_TITLE_FONT = "standard"
+_DEFAULT_FIGLET_SLIDE_FONT = "small"
+
+
+def _safe_figlet_font(name: Any, fallback: str) -> str:
+    """Return a valid figlet font name, otherwise a fallback.
+
+    This protects against user-provided theme files specifying fonts that aren't
+    installed in the current pyfiglet installation.
+    """
+    if not isinstance(name, str) or not name.strip():
+        return fallback
+
+    font = name.strip()
+    try:
+        if font in set(FigletFont.getFonts()):
+            return font
+    except Exception:
+        pass
+
+    return fallback
 
 
 def _resolve_theme_color(color: Any) -> int:
@@ -129,7 +153,7 @@ def _apply_theme_colors(theme: Dict[str, Any]) -> None:
 _BUILTIN_THEMES: Dict[str, Dict[str, Any]] = {
     # Defaults preserve the existing look, but can be overridden.
     "dark": {
-        "figlet": {"title": "mono12", "slide": "smblock"},
+        "figlet": {"title": "slant", "slide": "small"},
         "colors": {
             "heading1": {"fg": 11, "bg": "default"},
             "heading2": {"fg": 14, "bg": "default"},
@@ -145,7 +169,7 @@ _BUILTIN_THEMES: Dict[str, Dict[str, Any]] = {
         },
     },
     "light": {
-        "figlet": {"title": "mono12", "slide": "smblock"},
+        "figlet": {"title": "lean", "slide": "mini"},
         "colors": {
             # Slightly calmer palette that tends to work on light backgrounds.
             "heading1": {"fg": curses.COLOR_BLUE, "bg": "default"},
@@ -162,7 +186,7 @@ _BUILTIN_THEMES: Dict[str, Dict[str, Any]] = {
         },
     },
     "nord": {
-        "figlet": {"title": "mono12", "slide": "smblock"},
+        "figlet": {"title": "smslant", "slide": "small"},
         "colors": {
             # Nord palette (approx): https://www.nordtheme.com/docs/colors-and-palettes
             # Use RGB tuples so we can map to the nearest 256-color index.
@@ -180,7 +204,7 @@ _BUILTIN_THEMES: Dict[str, Dict[str, Any]] = {
         },
     },
     "nord-aurora": {
-        "figlet": {"title": "mono12", "slide": "smblock"},
+        "figlet": {"title": "univers", "slide": "small"},
         "colors": {
             # Nord Aurora: nord11..nord15
             "heading1": {"fg": (191, 97, 106), "bg": "default"},   # nord11
@@ -197,7 +221,7 @@ _BUILTIN_THEMES: Dict[str, Dict[str, Any]] = {
         },
     },
     "nord-frost": {
-        "figlet": {"title": "mono12", "slide": "smblock"},
+        "figlet": {"title": "banner3-D", "slide": "smslant"},
         "colors": {
             # Nord Frost: nord7..nord10
             "heading1": {"fg": (136, 192, 208), "bg": "default"},  # nord8
@@ -214,7 +238,7 @@ _BUILTIN_THEMES: Dict[str, Dict[str, Any]] = {
         },
     },
     "nord-snow-storm": {
-        "figlet": {"title": "mono12", "slide": "smblock"},
+        "figlet": {"title": "thin", "slide": "mini"},
         "colors": {
             # Nord Snow Storm: nord4..nord6 (light, low-contrast on light terminals)
             "heading1": {"fg": (216, 222, 233), "bg": "default"},  # nord4
@@ -231,7 +255,7 @@ _BUILTIN_THEMES: Dict[str, Dict[str, Any]] = {
         },
     },
     "nord-polar-night": {
-        "figlet": {"title": "mono12", "slide": "smblock"},
+        "figlet": {"title": "gothic", "slide": "smslant"},
         "colors": {
             # Nord Polar Night: nord0..nord3
             "heading1": {"fg": (76, 86, 106), "bg": "default"},    # nord3
@@ -248,7 +272,7 @@ _BUILTIN_THEMES: Dict[str, Dict[str, Any]] = {
         },
     },
     "github": {
-        "figlet": {"title": "mono12", "slide": "smblock"},
+        "figlet": {"title": "standard", "slide": "small"},
         "colors": {
             # GitHub-ish accents (approx). These are not official terminal mappings,
             # but should feel familiar.
@@ -400,7 +424,8 @@ def _parse_simple_yaml_theme(yaml_text: str) -> Dict[str, Any]:
             raise ValueError(f"Unknown figlet key: {k}")
         if not isinstance(v, str) or not v:
             raise ValueError(f"figlet.{k} must be a non-empty string")
-        theme["figlet"][k] = v
+        # Store the raw requested font; actual font is resolved safely at runtime.
+        theme["figlet"][k] = v.strip()
 
     colors = data.get("colors") or {}
     if colors and not isinstance(colors, dict):
@@ -1925,8 +1950,12 @@ def run_slideshow(stdscr, slides):
 
     h, w = stdscr.getmaxyx()
     figlet_cfg = (_ACTIVE_THEME or {}).get("figlet", {})
-    fig_title = Figlet(font=figlet_cfg.get("title", "mono12"), width=w)
-    fig_slide = Figlet(font=figlet_cfg.get("slide", "smblock"), width=w)
+
+    title_font = _safe_figlet_font(figlet_cfg.get("title"), _DEFAULT_FIGLET_TITLE_FONT)
+    slide_font = _safe_figlet_font(figlet_cfg.get("slide"), _DEFAULT_FIGLET_SLIDE_FONT)
+
+    fig_title = Figlet(font=title_font, width=w)
+    fig_slide = Figlet(font=slide_font, width=w)
     idx = 0
 
     while True:
