@@ -7,6 +7,8 @@ Pillow>=10.0.0
 # Mermaid diagrams rendered as ASCII (optional)
 mermaid-ascii-diagrams>=0.1.0
 
+# External theme support (optional)
+PyYAML>=6.0
+
 # On Windows, users need curses support
 # pip install windows-curses
-

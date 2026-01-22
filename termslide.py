@@ -48,6 +48,14 @@ except Exception:
     _render_ascii = None
     _MERMAID_LIB_AVAILABLE = False
 
+try:
+    import yaml
+
+    _YAML_AVAILABLE = True
+except Exception:
+    yaml = None
+    _YAML_AVAILABLE = False
+
 # Tracks whether the current presentation contains any Mermaid blocks.
 _ENCOUNTERED_MERMAID_BLOCK = False
 
@@ -302,23 +310,18 @@ def _get_theme_by_name(name: str) -> Dict[str, Any]:
     return _BUILTIN_THEMES.get(name, _BUILTIN_THEMES["dark"])
 
 
-def _parse_simple_yaml_theme(yaml_text: str) -> Dict[str, Any]:
-    """Parse a very small YAML subset for TermSlide themes.
+def _parse_yaml_theme(yaml_text: str) -> Dict[str, Any]:
+    """Parse a YAML theme using safe_load + strict validation."""
+    if not _YAML_AVAILABLE or yaml is None:
+        raise ValueError("PyYAML is not available")
 
-    Security goals:
-    - No arbitrary object construction.
-    - Only accepts the subset of YAML we expect (mappings + simple scalars + [r,g,b]).
+    try:
+        data = yaml.safe_load(yaml_text) or {}
+    except Exception as e:
+        raise ValueError(f"Invalid YAML: {e}")
 
-    Expected shape:
-      name: <string> (optional)
-      figlet:
-        title: <string>
-        slide: <string>
-      colors:
-        <role>:
-          fg: default | <int 0-255> | [r,g,b]
-          bg: default | <int 0-255> | [r,g,b]
-    """
+    if not isinstance(data, dict):
+        raise ValueError("Theme YAML must be a mapping")
 
     allowed_top = {"name", "figlet", "colors"}
     allowed_figlet = {"title", "slide"}
@@ -337,84 +340,6 @@ def _parse_simple_yaml_theme(yaml_text: str) -> Dict[str, Any]:
     }
     allowed_color_keys = {"fg", "bg"}
 
-    def strip_comment(s: str) -> str:
-        # Good enough for our files: treat first unquoted # as comment.
-        if "#" not in s:
-            return s
-        in_sq = False
-        in_dq = False
-        for idx, ch in enumerate(s):
-            if ch == "'" and not in_dq:
-                in_sq = not in_sq
-            elif ch == '"' and not in_sq:
-                in_dq = not in_dq
-            elif ch == "#" and not in_sq and not in_dq:
-                return s[:idx]
-        return s
-
-    def parse_value(v: str):
-        v = v.strip()
-        if not v:
-            return ""
-        if v in ("default", "~", "null", "Null", "NULL"):
-            return "default"
-        if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
-            return v[1:-1]
-        if re.fullmatch(r"-?\d+", v):
-            n = int(v)
-            return n
-        m = re.fullmatch(r"\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]", v)
-        if m:
-            rgb = tuple(int(x) for x in m.groups())
-            return rgb
-        return v
-
-    data: Dict[str, Any] = {}
-    current: Any = data
-    stack: List[tuple[int, Any]] = [(0, data)]
-
-    for raw in yaml_text.splitlines():
-        line = strip_comment(raw).rstrip("\n")
-        if not line.strip():
-            continue
-        if "\t" in line:
-            raise ValueError("Tabs are not allowed in theme YAML")
-
-        indent = len(line) - len(line.lstrip(" "))
-        if indent % 2 != 0:
-            raise ValueError("Theme YAML indentation must be 2-space aligned")
-
-        while stack and indent < stack[-1][0]:
-            stack.pop()
-        if not stack:
-            raise ValueError("Invalid indentation in theme YAML")
-        current = stack[-1][1]
-
-        if ":" not in line:
-            raise ValueError(f"Invalid YAML line (missing ':'): {raw}")
-
-        key, val = line.lstrip(" ").split(":", 1)
-        key = key.strip()
-        val = val.strip()
-
-        if not key or not re.fullmatch(r"[A-Za-z0-9_\-]+", key):
-            raise ValueError(f"Invalid key in theme YAML: {key!r}")
-
-        if val == "":
-            # Start of mapping
-            new_map: Dict[str, Any] = {}
-            if not isinstance(current, dict):
-                raise ValueError("Unexpected structure in theme YAML")
-            current[key] = new_map
-            stack.append((indent + 2, new_map))
-            continue
-
-        if not isinstance(current, dict):
-            raise ValueError("Unexpected structure in theme YAML")
-
-        current[key] = parse_value(val)
-
-    # Validate shape and coerce types
     for k in data.keys():
         if k not in allowed_top:
             raise ValueError(f"Unknown top-level key: {k}")
@@ -422,31 +347,33 @@ def _parse_simple_yaml_theme(yaml_text: str) -> Dict[str, Any]:
     theme: Dict[str, Any] = {"figlet": {}, "colors": {}}
 
     figlet = data.get("figlet") or {}
-    if figlet and not isinstance(figlet, dict):
+    if "figlet" in data and not isinstance(figlet, dict):
         raise ValueError("figlet must be a mapping")
+    if "figlet" not in data:
+        figlet = {}
+    if "figlet" in data and not figlet:
+        raise ValueError("figlet must be a non-empty mapping")
     for k, v in figlet.items():
         if k not in allowed_figlet:
             raise ValueError(f"Unknown figlet key: {k}")
-        if not isinstance(v, str) or not v:
+        if not isinstance(v, str) or not v.strip():
             raise ValueError(f"figlet.{k} must be a non-empty string")
-        # Store the raw requested font; actual font is resolved safely at runtime.
         theme["figlet"][k] = v.strip()
 
     colors = data.get("colors") or {}
-    if colors and not isinstance(colors, dict):
+    if "colors" in data and not isinstance(colors, dict):
         raise ValueError("colors must be a mapping")
 
     def validate_color_value(v):
-        if v == "default":
+        if v == "default" or v is None:
             return "default"
         if isinstance(v, int):
             if 0 <= v <= 255:
                 return v
             raise ValueError("color int must be 0..255")
-        if isinstance(v, tuple) and len(v) == 3:
-            r, g, b = v
-            if all(isinstance(x, int) and 0 <= x <= 255 for x in (r, g, b)):
-                return v
+        if isinstance(v, (list, tuple)) and len(v) == 3:
+            if all(isinstance(x, int) and 0 <= x <= 255 for x in v):
+                return tuple(v)
             raise ValueError("RGB values must be 0..255")
         raise ValueError("color must be 'default', an int, or [r,g,b]")
 
@@ -462,11 +389,12 @@ def _parse_simple_yaml_theme(yaml_text: str) -> Dict[str, Any]:
             out_cfg[ck] = validate_color_value(cv)
         theme["colors"][role] = out_cfg
 
-    # name is optional; we ignore it for now.
     return theme
 
 
 def _load_theme_from_yaml_file(path: str) -> Dict[str, Any]:
+    if not _YAML_AVAILABLE:
+        raise ValueError("PyYAML is not available")
     if not os.path.isfile(path):
         raise ValueError("Theme path is not a file")
     if os.path.getsize(path) > _MAX_THEME_FILE_SIZE:
@@ -475,11 +403,14 @@ def _load_theme_from_yaml_file(path: str) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
         text = f.read()
 
-    return _parse_simple_yaml_theme(text)
+    return _parse_yaml_theme(text)
 
 
 def _try_load_theme_file(theme_arg: str) -> Dict[str, Any] | None:
     """If theme_arg refers to a YAML file in the current directory, load it."""
+    if not _YAML_AVAILABLE:
+        return None
+
     p = pathlib.Path(theme_arg)
 
     # Only allow files in current working directory (or subdirectories).
@@ -2020,6 +1951,8 @@ def _resolve_theme_from_sources(cli_theme: Optional[str], front_matter: Dict[str
         loaded = _try_load_theme_file(cli_theme)
         if loaded is not None:
             return loaded
+        if pathlib.Path(cli_theme).suffix.lower() in (".yml", ".yaml") and not _YAML_AVAILABLE:
+            print("Warning: PyYAML not installed; ignoring external theme file.", file=sys.stderr)
         return _get_theme_by_name(cli_theme.lower())
 
     fm_theme = (front_matter.get("theme") or "").strip().lower()
@@ -2064,27 +1997,37 @@ def main() -> None:
     try:
         curses.wrapper(run_slideshow, slides, theme)
     finally:
-        # After curses exits, print a one-time reminder if Mermaid blocks were present but
-        # Mermaid rendering support is missing.
+        # After curses exits, print reminders for optional dependencies.
+        msgs = []
         if _ENCOUNTERED_MERMAID_BLOCK and not _MERMAID_LIB_AVAILABLE:
-            msg = (
+            msgs.append(
                 "Note: This presentation contains Mermaid diagrams.\n"
                 "Install support with:\n"
                 "  pip install mermaid-ascii-diagrams\n"
             )
-            # Prefer showing the message even if stderr/stdout are redirected.
-            for stream in (getattr(sys, "__stderr__", None), getattr(sys, "__stdout__", None)):
-                try:
-                    if stream:
-                        print(msg, file=stream, flush=True)
-                except Exception:
-                    pass
+        if not _YAML_AVAILABLE:
+            msgs.append(
+                "Note: PyYAML is not installed. External theme files are disabled.\n"
+                "Install support with:\n"
+                "  pip install PyYAML\n"
+            )
+        if not msgs:
+            return
+
+        msg = "\n".join(msgs)
+        # Prefer showing the message even if stderr/stdout are redirected.
+        for stream in (getattr(sys, "__stderr__", None), getattr(sys, "__stdout__", None)):
             try:
-                with open("/dev/tty", "w", encoding="utf-8", errors="ignore") as tty:
-                    tty.write(msg)
-                    tty.flush()
+                if stream:
+                    print(msg, file=stream, flush=True)
             except Exception:
                 pass
+        try:
+            with open("/dev/tty", "w", encoding="utf-8", errors="ignore") as tty:
+                tty.write(msg)
+                tty.flush()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
