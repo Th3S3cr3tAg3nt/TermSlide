@@ -1364,8 +1364,35 @@ def format_text(line, stdscr, y, x, maxw, fig_slide, lines=None, line_idx=0):
             format_inline(text, stdscr, y, x, maxw)
             stdscr.attroff(curses.color_pair(4) | curses.A_BOLD)
             return 1, 1
-    if line.strip().startswith("- "):
-        line = "• " + line.strip()[2:]
+    stripped = line.strip()
+
+    # Task list items (checkboxes)
+    # Supports:
+    # - [ ] unchecked
+    # - [x] checked
+    # - [X] checked
+    # * [ ] unchecked
+    # + [ ] unchecked
+    m_task = re.match(r"^[-*+]\s+\[( |x|X)\]\s+(.*)$", stripped)
+    if m_task:
+        state, text = m_task.group(1), m_task.group(2)
+
+        use_ascii = bool(os.environ.get("TERMSLIDE_ASCII_CHECKBOXES")) or not _utf8_probably_supported()
+        if state in ("x", "X"):
+            box = "[x]" if use_ascii else "☑"  # U+2611
+            color = curses.color_pair(11)
+        else:
+            box = "[ ]" if use_ascii else "☐"  # U+2610
+            color = curses.color_pair(10)
+
+        stdscr.attron(color)
+        format_inline(f"{box} {text}", stdscr, y, x, maxw)
+        stdscr.attroff(color)
+        return 1, 1
+
+    # Normal unordered list items
+    if stripped.startswith("- "):
+        line = "• " + stripped[2:]
         stdscr.attron(curses.color_pair(10))
         format_inline(line, stdscr, y, x, maxw)
         stdscr.attroff(curses.color_pair(10))
@@ -1444,7 +1471,8 @@ def run_slideshow(stdscr, slides):
     curses.init_pair(7, curses.COLOR_GREEN, -1)    # Code
     curses.init_pair(8, curses.COLOR_WHITE, -1)    # Table
     curses.init_pair(9, curses.COLOR_WHITE, -1)    # Blockquote
-    curses.init_pair(10, curses.COLOR_CYAN, -1)    # Bullets
+    curses.init_pair(10, curses.COLOR_CYAN, -1)    # Bullets / unchecked checkboxes
+    curses.init_pair(11, curses.COLOR_GREEN, -1)   # Checked checkboxes
     curses.init_pair(12, curses.COLOR_BLUE, -1)    # Links & image paths
 
     h, w = stdscr.getmaxyx()
