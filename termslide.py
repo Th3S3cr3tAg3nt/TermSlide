@@ -273,8 +273,211 @@ def _get_active_theme() -> Dict[str, Any]:
     return _BUILTIN_THEMES.get(name, _BUILTIN_THEMES["dark"])
 
 
+def _parse_simple_yaml_theme(yaml_text: str) -> Dict[str, Any]:
+    """Parse a very small YAML subset for TermSlide themes.
+
+    Security goals:
+    - No arbitrary object construction.
+    - Only accepts the subset of YAML we expect (mappings + simple scalars + [r,g,b]).
+
+    Expected shape:
+      name: <string> (optional)
+      figlet:
+        title: <string>
+        slide: <string>
+      colors:
+        <role>:
+          fg: default | <int 0-255> | [r,g,b]
+          bg: default | <int 0-255> | [r,g,b]
+    """
+
+    allowed_top = {"name", "figlet", "colors"}
+    allowed_figlet = {"title", "slide"}
+    allowed_roles = {
+        "heading1",
+        "heading2",
+        "heading3",
+        "bold",
+        "italic",
+        "code",
+        "table",
+        "blockquote",
+        "bullet",
+        "checkbox_checked",
+        "link",
+    }
+    allowed_color_keys = {"fg", "bg"}
+
+    def strip_comment(s: str) -> str:
+        # Good enough for our files: treat first unquoted # as comment.
+        if "#" not in s:
+            return s
+        in_sq = False
+        in_dq = False
+        for idx, ch in enumerate(s):
+            if ch == "'" and not in_dq:
+                in_sq = not in_sq
+            elif ch == '"' and not in_sq:
+                in_dq = not in_dq
+            elif ch == "#" and not in_sq and not in_dq:
+                return s[:idx]
+        return s
+
+    def parse_value(v: str):
+        v = v.strip()
+        if not v:
+            return ""
+        if v in ("default", "~", "null", "Null", "NULL"):
+            return "default"
+        if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+            return v[1:-1]
+        if re.fullmatch(r"-?\d+", v):
+            n = int(v)
+            return n
+        m = re.fullmatch(r"\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]", v)
+        if m:
+            rgb = tuple(int(x) for x in m.groups())
+            return rgb
+        return v
+
+    data: Dict[str, Any] = {}
+    current: Any = data
+    stack: List[tuple[int, Any]] = [(0, data)]
+
+    for raw in yaml_text.splitlines():
+        line = strip_comment(raw).rstrip("\n")
+        if not line.strip():
+            continue
+        if "\t" in line:
+            raise ValueError("Tabs are not allowed in theme YAML")
+
+        indent = len(line) - len(line.lstrip(" "))
+        if indent % 2 != 0:
+            raise ValueError("Theme YAML indentation must be 2-space aligned")
+
+        while stack and indent < stack[-1][0]:
+            stack.pop()
+        if not stack:
+            raise ValueError("Invalid indentation in theme YAML")
+        current = stack[-1][1]
+
+        if ":" not in line:
+            raise ValueError(f"Invalid YAML line (missing ':'): {raw}")
+
+        key, val = line.lstrip(" ").split(":", 1)
+        key = key.strip()
+        val = val.strip()
+
+        if not key or not re.fullmatch(r"[A-Za-z0-9_\-]+", key):
+            raise ValueError(f"Invalid key in theme YAML: {key!r}")
+
+        if val == "":
+            # Start of mapping
+            new_map: Dict[str, Any] = {}
+            if not isinstance(current, dict):
+                raise ValueError("Unexpected structure in theme YAML")
+            current[key] = new_map
+            stack.append((indent + 2, new_map))
+            continue
+
+        if not isinstance(current, dict):
+            raise ValueError("Unexpected structure in theme YAML")
+
+        current[key] = parse_value(val)
+
+    # Validate shape and coerce types
+    for k in data.keys():
+        if k not in allowed_top:
+            raise ValueError(f"Unknown top-level key: {k}")
+
+    theme: Dict[str, Any] = {"figlet": {}, "colors": {}}
+
+    figlet = data.get("figlet") or {}
+    if figlet and not isinstance(figlet, dict):
+        raise ValueError("figlet must be a mapping")
+    for k, v in figlet.items():
+        if k not in allowed_figlet:
+            raise ValueError(f"Unknown figlet key: {k}")
+        if not isinstance(v, str) or not v:
+            raise ValueError(f"figlet.{k} must be a non-empty string")
+        theme["figlet"][k] = v
+
+    colors = data.get("colors") or {}
+    if colors and not isinstance(colors, dict):
+        raise ValueError("colors must be a mapping")
+
+    def validate_color_value(v):
+        if v == "default":
+            return "default"
+        if isinstance(v, int):
+            if 0 <= v <= 255:
+                return v
+            raise ValueError("color int must be 0..255")
+        if isinstance(v, tuple) and len(v) == 3:
+            r, g, b = v
+            if all(isinstance(x, int) and 0 <= x <= 255 for x in (r, g, b)):
+                return v
+            raise ValueError("RGB values must be 0..255")
+        raise ValueError("color must be 'default', an int, or [r,g,b]")
+
+    for role, role_cfg in colors.items():
+        if role not in allowed_roles:
+            raise ValueError(f"Unknown color role: {role}")
+        if not isinstance(role_cfg, dict):
+            raise ValueError(f"colors.{role} must be a mapping")
+        out_cfg: Dict[str, Any] = {}
+        for ck, cv in role_cfg.items():
+            if ck not in allowed_color_keys:
+                raise ValueError(f"Unknown key under colors.{role}: {ck}")
+            out_cfg[ck] = validate_color_value(cv)
+        theme["colors"][role] = out_cfg
+
+    # name is optional; we ignore it for now.
+    return theme
+
+
+def _load_theme_from_yaml_file(path: str) -> Dict[str, Any]:
+    if not os.path.isfile(path):
+        raise ValueError("Theme path is not a file")
+    if os.path.getsize(path) > _MAX_THEME_FILE_SIZE:
+        raise ValueError("Theme file is too large")
+
+    with open(path, "r", encoding="utf-8") as f:
+        text = f.read()
+
+    return _parse_simple_yaml_theme(text)
+
+
+def _try_load_cli_theme(theme_arg: str) -> Dict[str, Any] | None:
+    """If theme_arg refers to a YAML file in the current directory, load it."""
+    p = pathlib.Path(theme_arg)
+
+    # Only allow files in current working directory (or subdirectories).
+    if p.is_absolute():
+        return None
+
+    if p.suffix.lower() not in (".yml", ".yaml"):
+        return None
+
+    try:
+        validated = validate_file_path(theme_arg, base_dir=os.getcwd())
+    except ValueError:
+        return None
+
+    if not os.path.isfile(validated):
+        return None
+
+    return _load_theme_from_yaml_file(validated)
+
+
 # Defer theme activation until curses is initialized.
 _ACTIVE_THEME: Dict[str, Any] | None = None
+
+# Optional external theme selected by CLI.
+_THEME_OVERRIDE: Dict[str, Any] | None = None
+
+# External theme files should be small.
+_MAX_THEME_FILE_SIZE = 128 * 1024  # 128KB
 
 # Image processing constants
 _MAX_IMAGE_DIMENSION = 8192  # Maximum width/height in pixels
@@ -1714,7 +1917,10 @@ def run_slideshow(stdscr, slides):
     curses.use_default_colors()
 
     # Load and apply theme (colors + fonts)
-    _ACTIVE_THEME = _get_active_theme()
+    if _THEME_OVERRIDE is not None:
+        _ACTIVE_THEME = _THEME_OVERRIDE
+    else:
+        _ACTIVE_THEME = _get_active_theme()
     _apply_theme_colors(_ACTIVE_THEME)
 
     h, w = stdscr.getmaxyx()
@@ -1779,12 +1985,21 @@ def main() -> None:
             if i + 1 >= len(args):
                 print("Error: --theme requires a value", file=sys.stderr)
                 raise SystemExit(2)
-            cli_theme = args[i + 1].strip().lower()
+            cli_theme = args[i + 1].strip()
+            # CLI theme may be either a built-in theme name OR a YAML theme file path.
+            loaded = _try_load_cli_theme(cli_theme)
+            if loaded is not None:
+                global _THEME_OVERRIDE
+                _THEME_OVERRIDE = loaded
+                cli_theme = "__external__"
+            else:
+                cli_theme = cli_theme.lower()
             i += 2
             continue
         if a in ("--help", "-h"):
             print("Usage: python termslide.py [--theme THEME] file.md")
             print("Built-in themes: dark, light, nord, nord-aurora, nord-frost, nord-snow-storm, nord-polar-night, github")
+            print("Or pass a theme YAML file (e.g. --theme themes/nord.yaml)")
             raise SystemExit(0)
         # first non-flag arg treated as file
         if a.startswith("-"):
@@ -1820,7 +2035,7 @@ def main() -> None:
 
     # Theme selection precedence: CLI > front matter > env var > default
     fm_theme = (front_matter.get("theme") or "").strip().lower() if isinstance(front_matter, dict) else ""
-    if cli_theme:
+    if cli_theme and cli_theme != "__external__":
         os.environ["TERMSLIDE_THEME"] = cli_theme
     elif fm_theme:
         os.environ["TERMSLIDE_THEME"] = fm_theme
