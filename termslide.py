@@ -30,7 +30,7 @@ import sys
 import unicodedata
 import pathlib
 import hashlib
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Dict
 
 from pyfiglet import Figlet
 
@@ -52,7 +52,7 @@ _ENCOUNTERED_MERMAID_BLOCK = False
 # Security constants
 _MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB max file size
 _ALLOWED_IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.bmp', '.gif'}
-_MAX_COLOR_PAIRS = 100  # Limit color pair allocation
+_MAX_COLOR_PAIRS = 4096  # Soft cap for dynamic color pairs
 
 # Image processing constants
 _MAX_IMAGE_DIMENSION = 8192  # Maximum width/height in pixels
@@ -301,9 +301,27 @@ def safe_terminal_encoding() -> str:
     return "utf-8"
 
 
+def _color_pair_capacity() -> int:
+    """Compute a safe usable color-pair capacity.
+
+    We keep a buffer because TermSlide also allocates pairs for headings/links,
+    and some curses implementations are picky about high pair ids.
+    """
+    try:
+        total = int(getattr(curses, "COLOR_PAIRS", 0) or 0)
+    except Exception:
+        total = 0
+
+    if total <= 0:
+        total = 64
+
+    # Reserve some low ids for non-image UI and keep within our soft cap.
+    return max(0, min(_MAX_COLOR_PAIRS, total - 64))
+
+
 def validate_color_pair_allocation(pair_id: int) -> bool:
     """Validate color pair ID to prevent overflow."""
-    return 0 <= pair_id < min(_MAX_COLOR_PAIRS, getattr(curses, 'COLOR_PAIRS', 64))
+    return 0 <= pair_id < _color_pair_capacity()
 
 
 def check_memory_availability(required_bytes: int) -> bool:
@@ -542,10 +560,15 @@ def select_char_by_brightness(brightness):
 
 
 def get_optimal_color_pair(fg_color, bg_color):
-    """Create optimal color pair for foreground/background combination."""
-    fg_idx = rgb_to_ansi256(*fg_color)
-    bg_idx = rgb_to_ansi256(*bg_color)
-    return (bg_idx, fg_idx)  # Note: curses uses (bg, fg) order
+    """Create optimal color key for foreground/background combination.
+
+    Returns (fg_idx, bg_idx) after quantization.
+    """
+    fg_q = quantize_rgb(fg_color)
+    bg_q = quantize_rgb(bg_color)
+    fg_idx = rgb_to_ansi256(*fg_q)
+    bg_idx = rgb_to_ansi256(*bg_q)
+    return (fg_idx, bg_idx)
 
 
 def analyze_2x2_pixels(canvas, x, y, width, height):
@@ -594,8 +617,8 @@ def analyze_2x2_pixels(canvas, x, y, width, height):
 def render_image_enhanced(stdscr, canvas, width, height, use_advanced=True):
     """Enhanced image rendering using multiple block characters while maintaining same dimensions."""
     h, w = stdscr.getmaxyx()
-    color_cache = {}
-    next_pair = 50
+    color_cache: Dict[tuple, int] = {}
+    next_pair_ref = [50]
     render_errors = 0
     
     # Use same dimensions as original simple rendering
@@ -607,7 +630,7 @@ def render_image_enhanced(stdscr, canvas, width, height, use_advanced=True):
     off_y = ((h - 1) - height // 2) // 2 if height // 2 < h - 1 else 0
     
     # Pre-calculate color cache for better performance
-    cache_size_limit = min(_MAX_COLOR_PAIRS, getattr(curses, 'COLOR_PAIRS', 64) - 50)
+    # (Capacity logic handled in _get_or_create_color_pair).
     
     for y in range(h - 1):
         for x in range(w):
@@ -664,21 +687,10 @@ def render_image_enhanced(stdscr, canvas, width, height, use_advanced=True):
                 # Get background color for color pair
                 bg_color = top  # Use top pixel as background
                 
-                # Create color pair
-                color_key = get_optimal_color_pair(color, bg_color)
-                if color_key not in color_cache:
-                    if next_pair < cache_size_limit:
-                        try:
-                            curses.init_pair(next_pair, color_key[1], color_key[0])  # fg, bg
-                            color_cache[color_key] = next_pair
-                            next_pair += 1
-                        except curses.error:
-                            color_cache[color_key] = 0
-                    else:
-                        color_cache[color_key] = 0
-                
+                # Get or allocate a color pair (hybrid strategy)
+                pair_id = _get_or_create_color_pair(color_cache, next_pair_ref, fg_color=color, bg_color=bg_color)
+
                 # Render character
-                pair_id = color_cache[color_key]
                 if pair_id > 0:
                     stdscr.attron(curses.color_pair(pair_id))
                 stdscr.addstr(y, x, char)
@@ -698,8 +710,8 @@ def render_image_enhanced(stdscr, canvas, width, height, use_advanced=True):
 def render_image_simple(stdscr, canvas, width, height):
     """Simple image rendering using half-block characters."""
     h, w = stdscr.getmaxyx()
-    color_cache = {}
-    next_pair = 50
+    color_cache: Dict[tuple, int] = {}
+    next_pair_ref = [50]
     render_errors = 0
     
     for y in range(h - 1):
@@ -715,25 +727,10 @@ def render_image_simple(stdscr, canvas, width, height):
                 else:
                     bot = (0, 0, 0)  # Black for out-of-bounds
                     
-                # Convert to ANSI colors
-                top_idx = rgb_to_ansi256(*top)
-                bot_idx = rgb_to_ansi256(*bot)
-                key = (bot_idx, top_idx)
-                
-                # Manage color cache
-                if key not in color_cache:
-                    if validate_color_pair_allocation(next_pair):
-                        try:
-                            curses.init_pair(next_pair, bot_idx, top_idx)
-                            color_cache[key] = next_pair
-                            next_pair += 1
-                        except curses.error:
-                            color_cache[key] = 0
-                    else:
-                        color_cache[key] = 0
-                
+                # Get or allocate a color pair (hybrid strategy)
+                pair_id = _get_or_create_color_pair(color_cache, next_pair_ref, fg_color=bot, bg_color=top)
+
                 # Render pixel
-                pair_id = color_cache[key]
                 if pair_id > 0:
                     stdscr.attron(curses.color_pair(pair_id))
                 stdscr.addstr(y, x, "▄")
@@ -872,6 +869,64 @@ def rgb_to_ansi256(r, g, b):
     g_ = int(round(g / 255 * 5))
     b_ = int(round(b / 255 * 5))
     return 16 + 36 * r_ + 6 * g_ + b_
+
+
+def quantize_rgb(color, levels: int = 6):
+    """Quantize an RGB color to reduce distinct fg/bg pairs.
+
+    levels=6 matches the 256-color cube (0..5), but quantizing early helps reduce
+    the number of distinct (fg,bg) pairs we attempt to allocate.
+    """
+    r, g, b = color
+    step = 255 / max(1, (levels - 1))
+
+    def q(v: int) -> int:
+        return int(round(v / step) * step)
+
+    return (q(r), q(g), q(b))
+
+
+def _get_or_create_color_pair(color_cache: Dict[tuple, int], next_pair_ref: List[int], fg_color, bg_color) -> int:
+    """Get (or allocate) a curses color pair for a fg/bg combination.
+
+    Hybrid strategy:
+    - Quantize RGB to reduce unique combinations.
+    - Allocate pairs up to a safe capacity.
+    - When capacity is reached, reuse a stable hash bucket of existing pairs
+      instead of falling back to 0 (default colors).
+    """
+    fg_q = quantize_rgb(fg_color)
+    bg_q = quantize_rgb(bg_color)
+
+    fg_idx = rgb_to_ansi256(*fg_q)
+    bg_idx = rgb_to_ansi256(*bg_q)
+    key = (fg_idx, bg_idx)
+
+    if key in color_cache:
+        return color_cache[key]
+
+    cap = _color_pair_capacity()
+    pair_id = next_pair_ref[0]
+
+    if pair_id < cap:
+        try:
+            curses.init_pair(pair_id, fg_idx, bg_idx)
+            color_cache[key] = pair_id
+            next_pair_ref[0] += 1
+            return pair_id
+        except curses.error:
+            # Fall through to reuse mode.
+            pass
+
+    # Reuse mode: map to an existing pair id range if possible.
+    # If we have any allocated pairs, pick one deterministically.
+    allocated = next_pair_ref[0] - 50  # 50 is our starting point
+    if allocated > 0:
+        # Stable bucket within allocated range.
+        bucket = (hash(key) % allocated)
+        return 50 + bucket
+
+    return 0
 
 
 def render_image_fallback(stdscr, img_path, alt):
