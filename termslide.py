@@ -179,6 +179,74 @@ _BUILTIN_THEMES: Dict[str, Dict[str, Any]] = {
             "link": {"fg": (94, 129, 172), "bg": "default"},       # nord10
         },
     },
+    "nord-aurora": {
+        "figlet": {"title": "mono12", "slide": "smblock"},
+        "colors": {
+            # Nord Aurora: nord11..nord15
+            "heading1": {"fg": (191, 97, 106), "bg": "default"},   # nord11
+            "heading2": {"fg": (208, 135, 112), "bg": "default"},  # nord12
+            "heading3": {"fg": (180, 142, 173), "bg": "default"},  # nord15
+            "bold": {"fg": (191, 97, 106), "bg": "default"},       # nord11
+            "italic": {"fg": (235, 203, 139), "bg": "default"},    # nord13
+            "code": {"fg": (163, 190, 140), "bg": "default"},      # nord14
+            "table": {"fg": (229, 233, 240), "bg": "default"},     # nord5
+            "blockquote": {"fg": (236, 239, 244), "bg": "default"},# nord6
+            "bullet": {"fg": (208, 135, 112), "bg": "default"},    # nord12
+            "checkbox_checked": {"fg": (163, 190, 140), "bg": "default"},
+            "link": {"fg": (191, 97, 106), "bg": "default"},       # nord11
+        },
+    },
+    "nord-frost": {
+        "figlet": {"title": "mono12", "slide": "smblock"},
+        "colors": {
+            # Nord Frost: nord7..nord10
+            "heading1": {"fg": (136, 192, 208), "bg": "default"},  # nord8
+            "heading2": {"fg": (129, 161, 193), "bg": "default"},  # nord9
+            "heading3": {"fg": (94, 129, 172), "bg": "default"},   # nord10
+            "bold": {"fg": (143, 188, 187), "bg": "default"},      # nord7
+            "italic": {"fg": (136, 192, 208), "bg": "default"},    # nord8
+            "code": {"fg": (94, 129, 172), "bg": "default"},       # nord10
+            "table": {"fg": (216, 222, 233), "bg": "default"},     # nord4
+            "blockquote": {"fg": (229, 233, 240), "bg": "default"},# nord5
+            "bullet": {"fg": (143, 188, 187), "bg": "default"},    # nord7
+            "checkbox_checked": {"fg": (143, 188, 187), "bg": "default"},
+            "link": {"fg": (94, 129, 172), "bg": "default"},       # nord10
+        },
+    },
+    "nord-snow-storm": {
+        "figlet": {"title": "mono12", "slide": "smblock"},
+        "colors": {
+            # Nord Snow Storm: nord4..nord6 (light, low-contrast on light terminals)
+            "heading1": {"fg": (216, 222, 233), "bg": "default"},  # nord4
+            "heading2": {"fg": (229, 233, 240), "bg": "default"},  # nord5
+            "heading3": {"fg": (236, 239, 244), "bg": "default"},  # nord6
+            "bold": {"fg": (229, 233, 240), "bg": "default"},      # nord5
+            "italic": {"fg": (236, 239, 244), "bg": "default"},    # nord6
+            "code": {"fg": (216, 222, 233), "bg": "default"},      # nord4
+            "table": {"fg": (236, 239, 244), "bg": "default"},     # nord6
+            "blockquote": {"fg": (229, 233, 240), "bg": "default"},# nord5
+            "bullet": {"fg": (216, 222, 233), "bg": "default"},    # nord4
+            "checkbox_checked": {"fg": (236, 239, 244), "bg": "default"},
+            "link": {"fg": (229, 233, 240), "bg": "default"},      # nord5
+        },
+    },
+    "nord-polar-night": {
+        "figlet": {"title": "mono12", "slide": "smblock"},
+        "colors": {
+            # Nord Polar Night: nord0..nord3
+            "heading1": {"fg": (76, 86, 106), "bg": "default"},    # nord3
+            "heading2": {"fg": (67, 76, 94), "bg": "default"},     # nord2
+            "heading3": {"fg": (59, 66, 82), "bg": "default"},     # nord1
+            "bold": {"fg": (76, 86, 106), "bg": "default"},        # nord3
+            "italic": {"fg": (67, 76, 94), "bg": "default"},       # nord2
+            "code": {"fg": (76, 86, 106), "bg": "default"},        # nord3
+            "table": {"fg": (216, 222, 233), "bg": "default"},     # nord4 (for readability)
+            "blockquote": {"fg": (216, 222, 233), "bg": "default"},# nord4
+            "bullet": {"fg": (76, 86, 106), "bg": "default"},      # nord3
+            "checkbox_checked": {"fg": (76, 86, 106), "bg": "default"},
+            "link": {"fg": (94, 129, 172), "bg": "default"},       # nord10 (readable)
+        },
+    },
     "github": {
         "figlet": {"title": "mono12", "slide": "smblock"},
         "colors": {
@@ -1716,7 +1784,7 @@ def main() -> None:
             continue
         if a in ("--help", "-h"):
             print("Usage: python termslide.py [--theme THEME] file.md")
-            print("Built-in themes: dark, light, nord, github")
+            print("Built-in themes: dark, light, nord, nord-aurora, nord-frost, nord-snow-storm, nord-polar-night, github")
             raise SystemExit(0)
         # first non-flag arg treated as file
         if a.startswith("-"):
