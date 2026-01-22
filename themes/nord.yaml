@@ -1,0 +1,49 @@
+# Example TermSlide theme file (Nord)
+#
+# This file is NOT loaded yet by termslide.py.
+# It's an example of the shape we will support when we implement external themes.
+#
+# Colors are either:
+# - an RGB triplet (0-255) which TermSlide maps to the nearest 256-color index, or
+# - "default" to keep the terminal's default foreground/background.
+#
+# Roles correspond to the internal theme keys in termslide.py.
+
+name: nord
+figlet:
+  title: mono12
+  slide: smblock
+colors:
+  heading1:
+    fg: [136, 192, 208]   # nord8
+    bg: default
+  heading2:
+    fg: [129, 161, 193]   # nord9
+    bg: default
+  heading3:
+    fg: [180, 142, 173]   # nord15
+    bg: default
+  bold:
+    fg: [191, 97, 106]    # nord11
+    bg: default
+  italic:
+    fg: [235, 203, 139]   # nord13
+    bg: default
+  code:
+    fg: [163, 190, 140]   # nord14
+    bg: default
+  table:
+    fg: [216, 222, 233]   # nord4
+    bg: default
+  blockquote:
+    fg: [229, 233, 240]   # nord5
+    bg: default
+  bullet:
+    fg: [143, 188, 187]   # nord7
+    bg: default
+  checkbox_checked:
+    fg: [163, 190, 140]   # nord14
+    bg: default
+  link:
+    fg: [94, 129, 172]    # nord10
+    bg: default
