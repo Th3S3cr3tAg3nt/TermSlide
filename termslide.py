@@ -965,10 +965,41 @@ except ImportError:
 
 
 def parse_markdown(md_text):
-    """Split Markdown into slides using '---' separators and simple title rules."""
+    """Split Markdown into slides.
+
+    Returns (slides, front_matter).
+
+    Slides are split using '---' separators and simple title rules.
+    If the markdown begins with YAML front matter, it is parsed (best effort)
+    and removed from the content before slide parsing.
+    """
     # Sanitize input first
     md_text = sanitize_markdown_content(md_text)
-    
+
+    front_matter: Dict[str, str] = {}
+
+    # YAML front matter (very small subset parser, no external deps):
+    # ---
+    # theme: nord
+    # ---
+    if md_text.startswith("---\n"):
+        end = md_text.find("\n---\n", 4)
+        if end != -1:
+            header = md_text[4:end]
+            body = md_text[end + len("\n---\n") :]
+            for raw_line in header.splitlines():
+                line = raw_line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if ":" not in line:
+                    continue
+                k, v = line.split(":", 1)
+                k = k.strip().lower()
+                v = v.strip().strip('"').strip("'")
+                if k:
+                    front_matter[k] = v
+            md_text = body
+
     slides = []
     raw_slides = re.split(r'^\-{3,}\s*$', md_text, flags=re.MULTILINE)
     for raw in raw_slides:
@@ -987,7 +1018,8 @@ def parse_markdown(md_text):
             else:
                 content = sanitize_markdown_content("\n".join(lines))
             slides.append(("content", title, content))
-    return slides
+
+    return slides, front_matter
 
 
 def parse_image_only(content):
@@ -1665,13 +1697,41 @@ def run_slideshow(stdscr, slides):
 
 def main() -> None:
     """Entry point."""
-    if len(sys.argv) < 2:
-        print("Usage: python termslide.py file.md")
+    # Usage:
+    #   python termslide.py slides.md
+    #   python termslide.py --theme nord slides.md
+    cli_theme: Optional[str] = None
+    md_path: Optional[str] = None
+
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in ("--theme", "-t"):
+            if i + 1 >= len(args):
+                print("Error: --theme requires a value", file=sys.stderr)
+                raise SystemExit(2)
+            cli_theme = args[i + 1].strip().lower()
+            i += 2
+            continue
+        if a in ("--help", "-h"):
+            print("Usage: python termslide.py [--theme THEME] file.md")
+            print("Built-in themes: dark, light, nord, github")
+            raise SystemExit(0)
+        # first non-flag arg treated as file
+        if a.startswith("-"):
+            print(f"Unknown option: {a}", file=sys.stderr)
+            raise SystemExit(2)
+        md_path = a
+        i += 1
+
+    if not md_path:
+        print("Usage: python termslide.py [--theme THEME] file.md")
         raise SystemExit(1)
 
     # Validate input file path
     try:
-        validated_file = validate_file_path(sys.argv[1])
+        validated_file = validate_file_path(md_path)
     except ValueError as e:
         print(f"Error: {e}", file=sys.stderr)
         raise SystemExit(1)
@@ -1682,13 +1742,20 @@ def main() -> None:
     try:
         with open(validated_file, "r", encoding="utf-8") as f:
             content = f.read()
-            slides = parse_markdown(content)
+            slides, front_matter = parse_markdown(content)
     except UnicodeDecodeError:
         print(f"Error: Unable to read file {validated_file} as UTF-8", file=sys.stderr)
         raise SystemExit(1)
     except IOError as e:
         print(f"Error reading file: {e}", file=sys.stderr)
         raise SystemExit(1)
+
+    # Theme selection precedence: CLI > front matter > env var > default
+    fm_theme = (front_matter.get("theme") or "").strip().lower() if isinstance(front_matter, dict) else ""
+    if cli_theme:
+        os.environ["TERMSLIDE_THEME"] = cli_theme
+    elif fm_theme:
+        os.environ["TERMSLIDE_THEME"] = fm_theme
 
     try:
         curses.wrapper(run_slideshow, slides)
