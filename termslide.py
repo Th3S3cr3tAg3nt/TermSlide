@@ -30,7 +30,7 @@ import sys
 import unicodedata
 import pathlib
 import hashlib
-from typing import Optional, Tuple, List, Dict
+from typing import Optional, Tuple, List, Dict, Any
 
 from pyfiglet import Figlet
 
@@ -53,6 +53,160 @@ _ENCOUNTERED_MERMAID_BLOCK = False
 _MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB max file size
 _ALLOWED_IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.bmp', '.gif'}
 _MAX_COLOR_PAIRS = 4096  # Soft cap for dynamic color pairs
+
+# Curses color pair IDs (keep stable; also used by render functions)
+PAIR_HEADING_1 = 2
+PAIR_HEADING_2 = 3
+PAIR_HEADING_3 = 4
+PAIR_BOLD = 5
+PAIR_ITALIC = 6
+PAIR_CODE = 7
+PAIR_TABLE = 8
+PAIR_BLOCKQUOTE = 9
+PAIR_BULLET = 10
+PAIR_CHECKBOX_CHECKED = 11
+PAIR_LINK = 12
+
+
+def _resolve_theme_color(color: Any) -> int:
+    """Resolve a theme color value to a curses color index.
+
+    Supported formats:
+    - int: curses color index (0-255)
+    - (r, g, b) tuple: mapped to nearest 256-color index
+    - "default": -1 (terminal default)
+
+    Note: `rgb_to_ansi256` is defined later in the file, so we avoid calling it
+    at import-time.
+    """
+    if color is None:
+        return -1
+    if color == "default":
+        return -1
+    if isinstance(color, int):
+        return color
+    if isinstance(color, tuple) and len(color) == 3:
+        r, g, b = color
+        # Defer to runtime: rgb_to_ansi256 exists by the time themes are applied.
+        return rgb_to_ansi256(int(r), int(g), int(b))
+    return -1
+
+
+def _apply_theme_colors(theme: Dict[str, Any]) -> None:
+    """Initialize curses color pairs from theme."""
+    colors = theme.get("colors", {})
+
+    def pair(pid: int, role: str, default_fg: int, default_bg: int = -1) -> None:
+        cfg = colors.get(role, {}) if isinstance(colors.get(role, {}), dict) else {}
+        fg = _resolve_theme_color(cfg.get("fg", default_fg))
+        bg = _resolve_theme_color(cfg.get("bg", default_bg))
+        try:
+            curses.init_pair(pid, fg, bg)
+        except curses.error:
+            # If a terminal doesn't like specific indices, fall back to default.
+            curses.init_pair(pid, -1, -1)
+
+    # Headings: allow "bright" variants when 16+ colors available.
+    if getattr(curses, "COLORS", 0) >= 16:
+        pair(PAIR_HEADING_1, "heading1", 11)
+        pair(PAIR_HEADING_2, "heading2", 14)
+        pair(PAIR_HEADING_3, "heading3", 13)
+    else:
+        pair(PAIR_HEADING_1, "heading1", curses.COLOR_YELLOW)
+        pair(PAIR_HEADING_2, "heading2", curses.COLOR_CYAN)
+        pair(PAIR_HEADING_3, "heading3", curses.COLOR_MAGENTA)
+
+    pair(PAIR_BOLD, "bold", curses.COLOR_RED)
+    pair(PAIR_ITALIC, "italic", curses.COLOR_YELLOW)
+    pair(PAIR_CODE, "code", curses.COLOR_GREEN)
+    pair(PAIR_TABLE, "table", curses.COLOR_WHITE)
+    pair(PAIR_BLOCKQUOTE, "blockquote", curses.COLOR_WHITE)
+    pair(PAIR_BULLET, "bullet", curses.COLOR_CYAN)
+    pair(PAIR_CHECKBOX_CHECKED, "checkbox_checked", curses.COLOR_GREEN)
+    pair(PAIR_LINK, "link", curses.COLOR_BLUE)
+
+
+_BUILTIN_THEMES: Dict[str, Dict[str, Any]] = {
+    # Defaults preserve the existing look, but can be overridden.
+    "dark": {
+        "figlet": {"title": "mono12", "slide": "smblock"},
+        "colors": {
+            "heading1": {"fg": 11, "bg": "default"},
+            "heading2": {"fg": 14, "bg": "default"},
+            "heading3": {"fg": 13, "bg": "default"},
+            "bold": {"fg": "default", "bg": "default"},
+            "italic": {"fg": "default", "bg": "default"},
+            "code": {"fg": "default", "bg": "default"},
+            "table": {"fg": "default", "bg": "default"},
+            "blockquote": {"fg": "default", "bg": "default"},
+            "bullet": {"fg": "default", "bg": "default"},
+            "checkbox_checked": {"fg": "default", "bg": "default"},
+            "link": {"fg": "default", "bg": "default"},
+        },
+    },
+    "light": {
+        "figlet": {"title": "mono12", "slide": "smblock"},
+        "colors": {
+            # Slightly calmer palette that tends to work on light backgrounds.
+            "heading1": {"fg": curses.COLOR_BLUE, "bg": "default"},
+            "heading2": {"fg": curses.COLOR_MAGENTA, "bg": "default"},
+            "heading3": {"fg": curses.COLOR_CYAN, "bg": "default"},
+            "bold": {"fg": curses.COLOR_RED, "bg": "default"},
+            "italic": {"fg": curses.COLOR_YELLOW, "bg": "default"},
+            "code": {"fg": curses.COLOR_GREEN, "bg": "default"},
+            "table": {"fg": curses.COLOR_BLACK, "bg": "default"},
+            "blockquote": {"fg": curses.COLOR_BLACK, "bg": "default"},
+            "bullet": {"fg": curses.COLOR_BLUE, "bg": "default"},
+            "checkbox_checked": {"fg": curses.COLOR_GREEN, "bg": "default"},
+            "link": {"fg": curses.COLOR_BLUE, "bg": "default"},
+        },
+    },
+    "nord": {
+        "figlet": {"title": "mono12", "slide": "smblock"},
+        "colors": {
+            # Nord palette (approx): https://www.nordtheme.com/docs/colors-and-palettes
+            # Use RGB tuples so we can map to the nearest 256-color index.
+            "heading1": {"fg": (136, 192, 208), "bg": "default"},  # nord8
+            "heading2": {"fg": (129, 161, 193), "bg": "default"},  # nord9
+            "heading3": {"fg": (180, 142, 173), "bg": "default"},  # nord15
+            "bold": {"fg": (191, 97, 106), "bg": "default"},       # nord11
+            "italic": {"fg": (235, 203, 139), "bg": "default"},    # nord13
+            "code": {"fg": (163, 190, 140), "bg": "default"},      # nord14
+            "table": {"fg": (216, 222, 233), "bg": "default"},     # nord4
+            "blockquote": {"fg": (229, 233, 240), "bg": "default"},# nord5
+            "bullet": {"fg": (143, 188, 187), "bg": "default"},    # nord7
+            "checkbox_checked": {"fg": (163, 190, 140), "bg": "default"},
+            "link": {"fg": (94, 129, 172), "bg": "default"},       # nord10
+        },
+    },
+    "github": {
+        "figlet": {"title": "mono12", "slide": "smblock"},
+        "colors": {
+            # GitHub-ish accents (approx). These are not official terminal mappings,
+            # but should feel familiar.
+            "heading1": {"fg": (9, 105, 218), "bg": "default"},
+            "heading2": {"fg": (130, 80, 223), "bg": "default"},
+            "heading3": {"fg": (31, 136, 61), "bg": "default"},
+            "bold": {"fg": (209, 36, 47), "bg": "default"},
+            "italic": {"fg": (191, 135, 0), "bg": "default"},
+            "code": {"fg": (31, 136, 61), "bg": "default"},
+            "table": {"fg": (87, 96, 106), "bg": "default"},
+            "blockquote": {"fg": (87, 96, 106), "bg": "default"},
+            "bullet": {"fg": (9, 105, 218), "bg": "default"},
+            "checkbox_checked": {"fg": (31, 136, 61), "bg": "default"},
+            "link": {"fg": (9, 105, 218), "bg": "default"},
+        },
+    },
+}
+
+
+def _get_active_theme() -> Dict[str, Any]:
+    name = (os.environ.get("TERMSLIDE_THEME") or "dark").strip().lower()
+    return _BUILTIN_THEMES.get(name, _BUILTIN_THEMES["dark"])
+
+
+# Defer theme activation until curses is initialized.
+_ACTIVE_THEME: Dict[str, Any] | None = None
 
 # Image processing constants
 _MAX_IMAGE_DIMENSION = 8192  # Maximum width/height in pixels
@@ -101,6 +255,7 @@ CHAR_PATTERNS = {
 
 # Quarter block patterns for 2x2 pixel detail
 QUARTER_BLOCKS = {
+
     (True, False, False, False): '▘',  # Top-left
     (False, True, False, False): '▝',  # Top-right
     (False, False, True, False): '▖',  # Bottom-left
@@ -1069,15 +1224,15 @@ def render_links(line, stdscr, y, x, maxw):
         if img_match:
             alt, url = img_match.groups()
             stdscr.addstr(y, x + start, f"Image: {alt} ")
-            stdscr.attron(curses.color_pair(12))
+            stdscr.attron(curses.color_pair(PAIR_LINK))
             stdscr.addstr(y, x + start + len(f"Image: {alt} "), f"({url})"[: maxw - (x + start)])
-            stdscr.attroff(curses.color_pair(12))
+            stdscr.attroff(curses.color_pair(PAIR_LINK))
         elif link_match:
             label, url = link_match.groups()
             stdscr.addstr(y, x + start, label + " ")
-            stdscr.attron(curses.color_pair(12))
+            stdscr.attron(curses.color_pair(PAIR_LINK))
             stdscr.addstr(y, x + start + len(label) + 1, f"({url})"[: maxw - (x + start + len(label) + 1)])
-            stdscr.attroff(curses.color_pair(12))
+            stdscr.attroff(curses.color_pair(PAIR_LINK))
         pos = end
     if pos < len(line):
         stdscr.addstr(y, x + pos, line[pos:])
@@ -1149,11 +1304,11 @@ def format_inline(line, stdscr, y, x, maxw):
             _add(line[last_end:start])
 
         if match.group(2):  # bold
-            _add(match.group(2), curses.color_pair(5))
+            _add(match.group(2), curses.color_pair(PAIR_BOLD))
         elif match.group(3):  # italic
-            _add(match.group(3), curses.color_pair(6))
+            _add(match.group(3), curses.color_pair(PAIR_ITALIC))
         elif match.group(4):  # inline code
-            _add(match.group(4), curses.color_pair(7))
+            _add(match.group(4), curses.color_pair(PAIR_CODE))
 
         last_end = end
 
@@ -1226,7 +1381,7 @@ def render_table(table_data, col_widths, stdscr, y, x, maxw):
     if not table_data:
         return 0
         
-    stdscr.attron(curses.color_pair(8))  # Table color
+    stdscr.attron(curses.color_pair(PAIR_TABLE))  # Table color
     lines_used = 0
     
     # Draw top border: +2 for spaces on both sides of content
@@ -1252,7 +1407,7 @@ def render_table(table_data, col_widths, stdscr, y, x, maxw):
     stdscr.addstr(y + lines_used, x, bot_border[:maxw - x])
     lines_used += 1
     
-    stdscr.attroff(curses.color_pair(8))
+    stdscr.attroff(curses.color_pair(PAIR_TABLE))
     return lines_used
 
 def render_mermaid(diagram_content, stdscr, y, x, maxw, color_attr):
@@ -1336,10 +1491,10 @@ def format_text(line, stdscr, y, x, maxw, fig_slide, lines=None, line_idx=0):
         return 1, 1
     if line.strip().startswith(">"):
         text = line.lstrip("> ").strip()
-        stdscr.attron(curses.color_pair(9))
+        stdscr.attron(curses.color_pair(PAIR_BLOCKQUOTE))
         stdscr.addstr(y, x, "│ ")
         format_inline(text, stdscr, y, x + 2, maxw)
-        stdscr.attroff(curses.color_pair(9))
+        stdscr.attroff(curses.color_pair(PAIR_BLOCKQUOTE))
         return 1, 1
     m = re.match(r"^(#+) (.*)$", line)
     if m:
@@ -1347,22 +1502,22 @@ def format_text(line, stdscr, y, x, maxw, fig_slide, lines=None, line_idx=0):
         text = m.group(2).strip()
         if level == 1:
             ascii_title = fig_slide.renderText(text)
-            stdscr.attron(curses.color_pair(2) | curses.A_BOLD)
+            stdscr.attron(curses.color_pair(PAIR_HEADING_1) | curses.A_BOLD)
             title_lines = ascii_title.splitlines()
             for i, l in enumerate(title_lines):
                 if y + i < stdscr.getmaxyx()[0]:
                     stdscr.addstr(y + i, x, l[:maxw - x])
-            stdscr.attroff(curses.color_pair(2) | curses.A_BOLD)
+            stdscr.attroff(curses.color_pair(PAIR_HEADING_1) | curses.A_BOLD)
             return len(title_lines), 1
         elif level == 2:
-            stdscr.attron(curses.color_pair(3) | curses.A_BOLD)
+            stdscr.attron(curses.color_pair(PAIR_HEADING_2) | curses.A_BOLD)
             format_inline(text, stdscr, y, x, maxw)
-            stdscr.attroff(curses.color_pair(3) | curses.A_BOLD)
+            stdscr.attroff(curses.color_pair(PAIR_HEADING_2) | curses.A_BOLD)
             return 1, 1
         else:
-            stdscr.attron(curses.color_pair(4) | curses.A_BOLD)
+            stdscr.attron(curses.color_pair(PAIR_HEADING_3) | curses.A_BOLD)
             format_inline(text, stdscr, y, x, maxw)
-            stdscr.attroff(curses.color_pair(4) | curses.A_BOLD)
+            stdscr.attroff(curses.color_pair(PAIR_HEADING_3) | curses.A_BOLD)
             return 1, 1
     stripped = line.strip()
 
@@ -1380,10 +1535,10 @@ def format_text(line, stdscr, y, x, maxw, fig_slide, lines=None, line_idx=0):
         use_ascii = bool(os.environ.get("TERMSLIDE_ASCII_CHECKBOXES")) or not _utf8_probably_supported()
         if state in ("x", "X"):
             box = "[x]" if use_ascii else "☑"  # U+2611
-            color = curses.color_pair(11)
+            color = curses.color_pair(PAIR_CHECKBOX_CHECKED)
         else:
             box = "[ ]" if use_ascii else "☐"  # U+2610
-            color = curses.color_pair(10)
+            color = curses.color_pair(PAIR_BULLET)
 
         stdscr.attron(color)
         format_inline(f"{box} {text}", stdscr, y, x, maxw)
@@ -1393,9 +1548,9 @@ def format_text(line, stdscr, y, x, maxw, fig_slide, lines=None, line_idx=0):
     # Normal unordered list items
     if stripped.startswith("- "):
         line = "• " + stripped[2:]
-        stdscr.attron(curses.color_pair(10))
+        stdscr.attron(curses.color_pair(PAIR_BULLET))
         format_inline(line, stdscr, y, x, maxw)
-        stdscr.attroff(curses.color_pair(10))
+        stdscr.attroff(curses.color_pair(PAIR_BULLET))
         return 1, 1
     format_inline(line, stdscr, y, x, maxw)
     return 1, 1
@@ -1428,14 +1583,14 @@ def render_content(stdscr, content, start_y, start_x, maxw, fig_slide):
                 in_code = False
                 if language == "mermaid":
                     diagram_content = "\n".join(code_lines)
-                    consumed = render_mermaid(diagram_content, stdscr, y, start_x, maxw, curses.color_pair(8))
+                    consumed = render_mermaid(diagram_content, stdscr, y, start_x, maxw, curses.color_pair(PAIR_TABLE))
                     y += consumed
                 else:
                     for code_line in code_lines:
-                        stdscr.attron(curses.color_pair(7))
+                        stdscr.attron(curses.color_pair(PAIR_CODE))
                         if y < stdscr.getmaxyx()[0] and start_x < stdscr.getmaxyx()[1]:
                             stdscr.addstr(y, start_x, "│ " + code_line[:maxw - (start_x + 2)])
-                        stdscr.attroff(curses.color_pair(7))
+                        stdscr.attroff(curses.color_pair(PAIR_CODE))
                         y += 1
                 language = None
                 code_lines = []
@@ -1452,34 +1607,20 @@ def render_content(stdscr, content, start_y, start_x, maxw, fig_slide):
 
 def run_slideshow(stdscr, slides):
     """Curses main loop: draw slides and handle navigation keys."""
+    global _ACTIVE_THEME
+
     curses.curs_set(0)
     curses.start_color()
     curses.use_default_colors()
-    # Brightest possible unique colors
-    # If 16+ colors are available, explicitly use the bright 16-color ANSI indices
-    # for headings so they render brighter even when A_BOLD doesn't increase intensity.
-    if getattr(curses, "COLORS", 0) >= 16:
-        curses.init_pair(2, 11, -1)  # Heading 1 (bright yellow)
-        curses.init_pair(3, 14, -1)  # Heading 2 (bright cyan)
-        curses.init_pair(4, 13, -1)  # Heading 3+ (bright magenta)
-    else:
-        curses.init_pair(2, curses.COLOR_YELLOW, -1)   # Heading 1
-        curses.init_pair(3, curses.COLOR_CYAN, -1)     # Heading 2
-        curses.init_pair(4, curses.COLOR_MAGENTA, -1)  # Heading 3+
-    curses.init_pair(5, curses.COLOR_RED, -1)      # Bold
-    curses.init_pair(6, curses.COLOR_YELLOW, -1)   # Italic
-    curses.init_pair(7, curses.COLOR_GREEN, -1)    # Code
-    curses.init_pair(8, curses.COLOR_WHITE, -1)    # Table
-    curses.init_pair(9, curses.COLOR_WHITE, -1)    # Blockquote
-    curses.init_pair(10, curses.COLOR_CYAN, -1)    # Bullets / unchecked checkboxes
-    curses.init_pair(11, curses.COLOR_GREEN, -1)   # Checked checkboxes
-    curses.init_pair(12, curses.COLOR_BLUE, -1)    # Links & image paths
+
+    # Load and apply theme (colors + fonts)
+    _ACTIVE_THEME = _get_active_theme()
+    _apply_theme_colors(_ACTIVE_THEME)
 
     h, w = stdscr.getmaxyx()
-    fig_title = Figlet(font="mono12", width=w)
-    #fig_title = Figlet(font="standard", width=w)
-    #fig_slide = Figlet(font="small", width=w)
-    fig_slide = Figlet(font="smblock", width=w)
+    figlet_cfg = (_ACTIVE_THEME or {}).get("figlet", {})
+    fig_title = Figlet(font=figlet_cfg.get("title", "mono12"), width=w)
+    fig_slide = Figlet(font=figlet_cfg.get("slide", "smblock"), width=w)
     idx = 0
 
     while True:
@@ -1490,21 +1631,21 @@ def run_slideshow(stdscr, slides):
             ascii_title = fig_title.renderText(title)
             lines = ascii_title.splitlines()
             start_y = max(0, (h - len(lines)) // 2)
-            stdscr.attron(curses.color_pair(2) | curses.A_BOLD)
+            stdscr.attron(curses.color_pair(PAIR_HEADING_1) | curses.A_BOLD)
             for i, line in enumerate(lines):
                 if start_y + i < h:
                     stdscr.addstr(start_y + i, max(0, (w - len(line)) // 2), line)
-            stdscr.attroff(curses.color_pair(2) | curses.A_BOLD)
+            stdscr.attroff(curses.color_pair(PAIR_HEADING_1) | curses.A_BOLD)
             if content:
                 render_content(stdscr, content, start_y + len(lines) + 2, max(0, w // 4), w, fig_slide)
         else:
             if title:
                 ascii_title = fig_slide.renderText(title)
-                stdscr.attron(curses.color_pair(2) | curses.A_BOLD)
+                stdscr.attron(curses.color_pair(PAIR_HEADING_1) | curses.A_BOLD)
                 for i, line in enumerate(ascii_title.splitlines()):
                     if i + 1 < h:
                         stdscr.addstr(i + 1, 2, line)
-                stdscr.attroff(curses.color_pair(2) | curses.A_BOLD)
+                stdscr.attroff(curses.color_pair(PAIR_HEADING_1) | curses.A_BOLD)
                 offset = len(ascii_title.splitlines()) + 2
             else:
                 offset = 1
