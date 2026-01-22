@@ -30,6 +30,7 @@ import sys
 import unicodedata
 import pathlib
 import hashlib
+import argparse
 from typing import Optional, Tuple, List, Dict, Any
 
 from pyfiglet import Figlet
@@ -297,6 +298,10 @@ def _get_active_theme() -> Dict[str, Any]:
     return _BUILTIN_THEMES.get(name, _BUILTIN_THEMES["dark"])
 
 
+def _get_theme_by_name(name: str) -> Dict[str, Any]:
+    return _BUILTIN_THEMES.get(name, _BUILTIN_THEMES["dark"])
+
+
 def _parse_simple_yaml_theme(yaml_text: str) -> Dict[str, Any]:
     """Parse a very small YAML subset for TermSlide themes.
 
@@ -473,7 +478,7 @@ def _load_theme_from_yaml_file(path: str) -> Dict[str, Any]:
     return _parse_simple_yaml_theme(text)
 
 
-def _try_load_cli_theme(theme_arg: str) -> Dict[str, Any] | None:
+def _try_load_theme_file(theme_arg: str) -> Dict[str, Any] | None:
     """If theme_arg refers to a YAML file in the current directory, load it."""
     p = pathlib.Path(theme_arg)
 
@@ -497,9 +502,6 @@ def _try_load_cli_theme(theme_arg: str) -> Dict[str, Any] | None:
 
 # Defer theme activation until curses is initialized.
 _ACTIVE_THEME: Dict[str, Any] | None = None
-
-# Optional external theme selected by CLI.
-_THEME_OVERRIDE: Dict[str, Any] | None = None
 
 # External theme files should be small.
 _MAX_THEME_FILE_SIZE = 128 * 1024  # 128KB
@@ -1933,7 +1935,7 @@ def render_content(stdscr, content, start_y, start_x, maxw, fig_slide):
         i += consumed[1]  # Use source_consumed
 
 
-def run_slideshow(stdscr, slides):
+def run_slideshow(stdscr, slides, theme: Dict[str, Any]):
     """Curses main loop: draw slides and handle navigation keys."""
     global _ACTIVE_THEME
 
@@ -1942,14 +1944,11 @@ def run_slideshow(stdscr, slides):
     curses.use_default_colors()
 
     # Load and apply theme (colors + fonts)
-    if _THEME_OVERRIDE is not None:
-        _ACTIVE_THEME = _THEME_OVERRIDE
-    else:
-        _ACTIVE_THEME = _get_active_theme()
-    _apply_theme_colors(_ACTIVE_THEME)
+    _ACTIVE_THEME = theme
+    _apply_theme_colors(theme)
 
     h, w = stdscr.getmaxyx()
-    figlet_cfg = (_ACTIVE_THEME or {}).get("figlet", {})
+    figlet_cfg = (theme or {}).get("figlet", {})
 
     title_font = _safe_figlet_font(figlet_cfg.get("title"), _DEFAULT_FIGLET_TITLE_FONT)
     slide_font = _safe_figlet_font(figlet_cfg.get("slide"), _DEFAULT_FIGLET_SLIDE_FONT)
@@ -1998,48 +1997,45 @@ def run_slideshow(stdscr, slides):
 
 
 
+def _build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="TermSlide: terminal-based Markdown slideshow",
+        add_help=True,
+    )
+    parser.add_argument("file", help="Path to markdown file")
+    parser.add_argument(
+        "--theme",
+        "-t",
+        help=(
+            "Built-in theme name or path to a YAML theme file (relative to cwd).\n"
+            "Built-ins: dark, light, nord, nord-aurora, nord-frost, nord-snow-storm, nord-polar-night, github"
+        ),
+    )
+    return parser
+
+
+def _resolve_theme_from_sources(cli_theme: Optional[str], front_matter: Dict[str, str]) -> Dict[str, Any]:
+    """Resolve theme with precedence: CLI > front matter > env var > default."""
+    if cli_theme:
+        loaded = _try_load_theme_file(cli_theme)
+        if loaded is not None:
+            return loaded
+        return _get_theme_by_name(cli_theme.lower())
+
+    fm_theme = (front_matter.get("theme") or "").strip().lower()
+    if fm_theme:
+        return _get_theme_by_name(fm_theme)
+
+    return _get_active_theme()
+
+
 def main() -> None:
     """Entry point."""
-    # Usage:
-    #   python termslide.py slides.md
-    #   python termslide.py --theme nord slides.md
-    cli_theme: Optional[str] = None
-    md_path: Optional[str] = None
+    parser = _build_arg_parser()
+    args = parser.parse_args()
 
-    args = sys.argv[1:]
-    i = 0
-    while i < len(args):
-        a = args[i]
-        if a in ("--theme", "-t"):
-            if i + 1 >= len(args):
-                print("Error: --theme requires a value", file=sys.stderr)
-                raise SystemExit(2)
-            cli_theme = args[i + 1].strip()
-            # CLI theme may be either a built-in theme name OR a YAML theme file path.
-            loaded = _try_load_cli_theme(cli_theme)
-            if loaded is not None:
-                global _THEME_OVERRIDE
-                _THEME_OVERRIDE = loaded
-                cli_theme = "__external__"
-            else:
-                cli_theme = cli_theme.lower()
-            i += 2
-            continue
-        if a in ("--help", "-h"):
-            print("Usage: python termslide.py [--theme THEME] file.md")
-            print("Built-in themes: dark, light, nord, nord-aurora, nord-frost, nord-snow-storm, nord-polar-night, github")
-            print("Or pass a theme YAML file (e.g. --theme themes/nord.yaml)")
-            raise SystemExit(0)
-        # first non-flag arg treated as file
-        if a.startswith("-"):
-            print(f"Unknown option: {a}", file=sys.stderr)
-            raise SystemExit(2)
-        md_path = a
-        i += 1
-
-    if not md_path:
-        print("Usage: python termslide.py [--theme THEME] file.md")
-        raise SystemExit(1)
+    md_path = args.file
+    cli_theme = args.theme
 
     # Validate input file path
     try:
@@ -2062,15 +2058,11 @@ def main() -> None:
         print(f"Error reading file: {e}", file=sys.stderr)
         raise SystemExit(1)
 
-    # Theme selection precedence: CLI > front matter > env var > default
-    fm_theme = (front_matter.get("theme") or "").strip().lower() if isinstance(front_matter, dict) else ""
-    if cli_theme and cli_theme != "__external__":
-        os.environ["TERMSLIDE_THEME"] = cli_theme
-    elif fm_theme:
-        os.environ["TERMSLIDE_THEME"] = fm_theme
+    # Resolve theme (CLI > front matter > env var > default)
+    theme = _resolve_theme_from_sources(cli_theme, front_matter if isinstance(front_matter, dict) else {})
 
     try:
-        curses.wrapper(run_slideshow, slides)
+        curses.wrapper(run_slideshow, slides, theme)
     finally:
         # After curses exits, print a one-time reminder if Mermaid blocks were present but
         # Mermaid rendering support is missing.
